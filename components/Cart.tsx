@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { PRODUCTS } from '../constants';
 import type { Product, CartItem } from '../types';
@@ -11,11 +12,33 @@ interface CartProduct extends Product {
     quantity: number;
 }
 
-type CheckoutStep = 'cart' | 'payment' | 'upiDetails' | 'success';
+type CheckoutStep = 'cart' | 'shipping' | 'payment' | 'upiDetails' | 'success';
+
+interface ShippingInfo {
+    fullName: string;
+    address1: string;
+    address2: string;
+    city: string;
+    state: string;
+    pincode: string;
+    phone: string;
+}
 
 export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
   const [cartItems, setCartItems] = useState<CartProduct[]>([]);
   const [checkoutStep, setCheckoutStep] = useState<CheckoutStep>('cart');
+  const [shippingInfo, setShippingInfo] = useState<ShippingInfo>({
+    fullName: '',
+    address1: '',
+    address2: '',
+    city: '',
+    state: '',
+    pincode: '',
+    phone: '',
+  });
+  const [errors, setErrors] = useState<Partial<ShippingInfo>>({});
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const updateCartItems = () => {
     const cart: CartItem[] = JSON.parse(localStorage.getItem('cart') || '[]');
@@ -31,7 +54,14 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
       updateCartItems();
     } else {
         // Reset checkout state when cart is closed
-        setTimeout(() => setCheckoutStep('cart'), 500);
+        setTimeout(() => {
+            setCheckoutStep('cart');
+            setShippingInfo({
+                fullName: '', address1: '', address2: '', city: '', 
+                state: '', pincode: '', phone: ''
+            });
+            setErrors({});
+        }, 500);
     }
     
     window.addEventListener('cart-updated', updateCartItems);
@@ -64,9 +94,61 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
     cart = cart.filter(id => id.id !== productId);
     updateCartInStorage(cart);
   };
+  
+  const handleShippingInfoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setShippingInfo(prev => ({ ...prev, [name]: value }));
+    if (errors[name as keyof ShippingInfo]) {
+        setErrors(prev => ({ ...prev, [name]: undefined }));
+    }
+  };
+
+  const validateShippingInfo = () => {
+    const newErrors: Partial<ShippingInfo> = {};
+    const deliveryErrorMsg = "our bracelets are not currently delivered here, we are trying to expand our buisness";
+
+    if (!shippingInfo.fullName.trim()) newErrors.fullName = 'Full name is required';
+    if (!shippingInfo.address1.trim()) newErrors.address1 = 'Address is required';
+
+    if (!shippingInfo.city.trim()) {
+        newErrors.city = 'City is required';
+    } else if (shippingInfo.city.trim().toLowerCase() !== 'pune') {
+        newErrors.city = deliveryErrorMsg;
+    }
+
+    if (!shippingInfo.state.trim()) {
+        newErrors.state = 'State is required';
+    } else if (shippingInfo.state.trim().toLowerCase() !== 'maharashtra') {
+        newErrors.state = deliveryErrorMsg;
+    }
+
+    const allowedPincodes = ['412207', '411047', '411014'];
+    if (!shippingInfo.pincode.trim()) {
+        newErrors.pincode = 'Pincode is required';
+    } else if (!/^\d{6}$/.test(shippingInfo.pincode)) {
+        newErrors.pincode = 'Enter a valid 6-digit pincode';
+    } else if (!allowedPincodes.includes(shippingInfo.pincode)) {
+        newErrors.pincode = "We are only delivering in Wagholi and nearby areas.";
+    }
+
+    if (!shippingInfo.phone.trim()) {
+        newErrors.phone = 'Phone number is required';
+    } else if (!/^\d{10}$/.test(shippingInfo.phone)) {
+        newErrors.phone = 'Enter a valid 10-digit phone number';
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleProceedToShipping = () => {
+    setCheckoutStep('shipping');
+  };
 
   const handleProceedToPayment = () => {
-    setCheckoutStep('payment');
+    if (validateShippingInfo()) {
+        setCheckoutStep('payment');
+    }
   };
 
   const finalizeOrder = () => {
@@ -78,6 +160,16 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
     }, 3000);
   };
 
+  const handleConfirmPayment = () => {
+    setShowConfirmationModal(false);
+    setIsVerifying(true);
+    // Simulate a 2.5 second verification delay
+    setTimeout(() => {
+        setIsVerifying(false);
+        finalizeOrder();
+    }, 2500);
+  };
+
   const totalPrice = useMemo(() => {
     return cartItems.reduce((total, item) => total + (item.price * item.quantity), 0);
   }, [cartItems]);
@@ -85,7 +177,7 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
   if (!isOpen) {
     return null;
   }
-
+  
   const renderContent = () => {
     switch (checkoutStep) {
       case 'success':
@@ -139,12 +231,22 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
                     </p>
                     <div className="mt-8">
                         <button
-                            onClick={finalizeOrder}
-                            className="w-full flex justify-center items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700"
+                            onClick={() => !isVerifying && setShowConfirmationModal(true)}
+                            disabled={isVerifying}
+                            className="w-full flex justify-center items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-wait"
                         >
-                            I have paid
+                            {isVerifying && (
+                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            )}
+                            {isVerifying ? 'Verifying Payment...' : 'I have paid'}
                         </button>
                     </div>
+                     <p className="text-xs text-stone-500 mt-4 px-2">
+                        In a real application, payment would be verified with the bank before confirming the order.
+                    </p>
                 </div>
             </div>
             <div className="border-t border-gray-200 py-6 px-4 sm:px-6">
@@ -158,6 +260,84 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
         );
+        case 'shipping':
+            return (
+              <div className="flex flex-col h-full">
+                <div className="flex-1 py-6 overflow-y-auto px-4 sm:px-6">
+                  <div className="flex items-start justify-between">
+                    <h2 className="text-lg font-medium text-gray-900" id="slide-over-title">
+                      Shipping Information
+                    </h2>
+                    <div className="ml-3 h-7 flex items-center">
+                      <button type="button" className="-m-2 p-2 text-gray-400 hover:text-gray-500" onClick={onClose}>
+                        <span className="sr-only">Close panel</span>
+                        <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm text-center text-stone-600 bg-stone-100 p-3 rounded-md">
+                    Currently, we are only delivering in <strong>Wagholi</strong> and nearby areas.
+                  </p>
+                  <div className="mt-6 space-y-4">
+                    <div>
+                        <label htmlFor="fullName" className="block text-sm font-medium text-gray-700">Full Name</label>
+                        <input type="text" name="fullName" id="fullName" value={shippingInfo.fullName} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                        {errors.fullName && <p className="mt-1 text-sm text-red-600">{errors.fullName}</p>}
+                    </div>
+                    <div>
+                        <label htmlFor="address1" className="block text-sm font-medium text-gray-700">Address Line 1</label>
+                        <input type="text" name="address1" id="address1" value={shippingInfo.address1} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                         {errors.address1 && <p className="mt-1 text-sm text-red-600">{errors.address1}</p>}
+                    </div>
+                    <div>
+                        <label htmlFor="address2" className="block text-sm font-medium text-gray-700">Address Line 2 <span className="text-xs text-gray-500">(Optional)</span></label>
+                        <input type="text" name="address2" id="address2" value={shippingInfo.address2} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="city" className="block text-sm font-medium text-gray-700">City</label>
+                            <input type="text" name="city" id="city" value={shippingInfo.city} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                            {errors.city && <p className="mt-1 text-sm text-red-600">{errors.city}</p>}
+                        </div>
+                        <div>
+                            <label htmlFor="state" className="block text-sm font-medium text-gray-700">State</label>
+                            <input type="text" name="state" id="state" value={shippingInfo.state} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                            {errors.state && <p className="mt-1 text-sm text-red-600">{errors.state}</p>}
+                        </div>
+                    </div>
+                     <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="pincode" className="block text-sm font-medium text-gray-700">Pincode</label>
+                            <input type="text" name="pincode" id="pincode" value={shippingInfo.pincode} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                            {errors.pincode && <p className="mt-1 text-sm text-red-600">{errors.pincode}</p>}
+                        </div>
+                        <div>
+                            <label htmlFor="phone" className="block text-sm font-medium text-gray-700">Phone</label>
+                            <input type="tel" name="phone" id="phone" value={shippingInfo.phone} onChange={handleShippingInfoChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm" />
+                             {errors.phone && <p className="mt-1 text-sm text-red-600">{errors.phone}</p>}
+                        </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="border-t border-gray-200 py-6 px-4 sm:px-6">
+                    <button
+                        onClick={handleProceedToPayment}
+                        className="w-full flex justify-center items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-amber-600 hover:bg-amber-700"
+                      >
+                        Proceed to Payment
+                    </button>
+                    <div className="mt-6 flex justify-center text-sm text-center text-gray-500">
+                      <p>
+                        <button type="button" className="text-amber-600 font-medium hover:text-amber-500" onClick={() => setCheckoutStep('cart')}>
+                          <span aria-hidden="true">&larr;</span> Back to Cart
+                        </button>
+                      </p>
+                    </div>
+                </div>
+              </div>
+            );
       case 'payment':
         return (
           <div className="flex flex-col h-full">
@@ -193,8 +373,8 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
             <div className="border-t border-gray-200 py-6 px-4 sm:px-6">
                 <div className="flex justify-center text-sm text-center text-gray-500">
                     <p>
-                        <button type="button" className="text-amber-600 font-medium hover:text-amber-500" onClick={() => setCheckoutStep('cart')}>
-                            <span aria-hidden="true">&larr;</span> Back to Cart
+                        <button type="button" className="text-amber-600 font-medium hover:text-amber-500" onClick={() => setCheckoutStep('shipping')}>
+                            <span aria-hidden="true">&larr;</span> Back to Shipping
                         </button>
                     </p>
                 </div>
@@ -278,7 +458,7 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
                 <p className="mt-0.5 text-sm text-gray-500">Shipping and taxes calculated at checkout.</p>
                 <div className="mt-6">
                   <button
-                    onClick={handleProceedToPayment}
+                    onClick={handleProceedToShipping}
                     className="w-full flex justify-center items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-amber-600 hover:bg-amber-700"
                   >
                     Checkout
@@ -309,8 +489,32 @@ export const Cart: React.FC<CartProps> = ({ isOpen, onClose }) => {
 
         <div className="fixed inset-y-0 right-0 pl-10 max-w-full flex">
             <div className={`transform transition ease-in-out duration-500 sm:duration-700 w-screen max-w-md ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-                <div className="h-full flex flex-col bg-white shadow-xl overflow-y-scroll">
+                <div className="h-full flex flex-col bg-white shadow-xl overflow-y-scroll relative">
                     {renderContent()}
+                    {showConfirmationModal && (
+                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-20">
+                            <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full text-center">
+                                <h3 className="text-lg font-semibold text-stone-800">Confirm Payment</h3>
+                                <p className="text-sm text-stone-600 my-4">
+                                    Please confirm that you have successfully completed the payment of <strong>₹{totalPrice.toFixed(2)}</strong>.
+                                </p>
+                                <div className="flex justify-end space-x-3 mt-5">
+                                    <button
+                                        onClick={() => setShowConfirmationModal(false)}
+                                        className="px-4 py-2 rounded-md text-sm font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleConfirmPayment}
+                                        className="px-4 py-2 rounded-md text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 transition-colors"
+                                    >
+                                        Yes, I've Paid
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
